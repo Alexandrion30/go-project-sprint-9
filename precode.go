@@ -5,28 +5,57 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Generator генерирует последовательность чисел 1,2,3 и т.д. и
 // отправляет их в канал ch. При этом после записи в канал для каждого числа
 // вызывается функция fn. Она служит для подсчёта количества и суммы
 // сгенерированных чисел.
+
+//Функция должна генерировать числа и записывать их в канал ch.
+//Для каждого числа должна быть вызвана функция fn().
+//Используйте такой алгоритм генерации:
+//- N(0) = 1;
+//- N(i) = N(i-1) + 1
+//Generator() прекращает работу, когда поступил сигнал об отмене контекста ctx.
+
 func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
-	// 1. Функция Generator
-	// ...
+	var val int64 = 1
+	defer close(ch)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			ch <- val
+			fn(val)
+			val++
+		}
+	}
+
 }
 
-// Worker читает число из канала in и пишет его в канал out.
+//Эта функция обрабатывает числа. Она должна читать числа из канала in до тех пор, пока он не закроется.
+//Полученное число нужно записать в канал out и сделать паузу на 1 миллисекунду.
+//Если канал in закрылся, то нужно закрыть канал out и завершить работу функции.
+
 func Worker(in <-chan int64, out chan<- int64) {
-	// 2. Функция Worker
-	// ...
+
+	defer close(out)
+	for val := range in {
+		out <- val
+		time.Sleep(1 * time.Millisecond)
+	}
 }
 
 func main() {
 	chIn := make(chan int64)
 
 	// 3. Создание контекста
-	// ...
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
 
 	// для проверки будем считать количество и сумму отправленных чисел
 	var inputSum int64   // сумма сгенерированных чисел
@@ -34,8 +63,8 @@ func main() {
 
 	// генерируем числа, считая параллельно их количество и сумму
 	go Generator(ctx, chIn, func(i int64) {
-		inputSum += i
-		inputCount++
+		atomic.AddInt64(&inputSum, i)
+		atomic.AddInt64(&inputCount, 1)
 	})
 
 	const NumOut = 5 // количество обрабатывающих горутин и каналов
@@ -55,7 +84,22 @@ func main() {
 	var wg sync.WaitGroup
 
 	// 4. Собираем числа из каналов outs
-	// ...
+	/*В этом фрагменте нужно пройтись по всем каналам из слайса outs и для каждого из них запустить горутину с анонимной функцией.
+	Горутина должна читать данные из переданного ей канала, до тех пор, пока он не закроется.
+	Чтобы дождаться завершения всех этих горутин, нужно воспользоваться механизмом WaitGroup.
+	Горутина должна подсчитывать обработанные числа (увеличивать соответствующий счётчик в слайсе amounts) передавать значения в канал chOut.
+	*/
+
+	for i := 0; i < NumOut; i++ {
+		wg.Add(1)
+		go func(in <-chan int64, number int) {
+			defer wg.Done()
+			for val := range in {
+				chOut <- val
+				amounts[number]++
+			}
+		}(outs[i], i)
+	}
 
 	go func() {
 		// ждём завершения работы всех горутин для outs
@@ -68,7 +112,10 @@ func main() {
 	var sum int64   // сумма чисел результирующего канала
 
 	// 5. Читаем числа из результирующего канала
-	// ...
+	for i := range chOut {
+		count++
+		sum += i
+	}
 
 	fmt.Println("Количество чисел", inputCount, count)
 	fmt.Println("Сумма чисел", inputSum, sum)
